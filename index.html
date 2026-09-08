@@ -128,6 +128,8 @@
     letter-spacing: 0.01em;
   }
   .hero-number{
+    position: relative;
+    display: inline-block;
     font-family: 'Orbitron', 'JetBrains Mono', monospace;
     font-size: 52px;
     font-weight: 700;
@@ -135,17 +137,41 @@
     line-height: 1.15;
     margin-top: 6px;
     letter-spacing: 0.01em;
-    background: linear-gradient(90deg, #FF3EC9 0%, #B15CFF 50%, #29E5FF 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    filter: drop-shadow(0 0 10px rgba(255,62,201,0.45)) drop-shadow(0 0 16px rgba(41,229,255,0.3));
-    width: fit-content;
+    color: rgba(255,62,201,0.82);
+    text-shadow: 0 0 14px rgba(255,62,201,0.45), 0 0 24px rgba(255,62,201,0.2);
   }
-  [data-theme="light"] .hero-number{
-    filter: drop-shadow(0 0 6px rgba(255,62,201,0.35));
+  .hero-number::before{
+    content: attr(data-text);
+    position: absolute;
+    left: -3px;
+    top: -3px;
+    color: #29E5FF;
+    text-shadow: 0 0 14px rgba(41,229,255,0.55), 0 0 26px rgba(41,229,255,0.25);
+    z-index: -1;
+    pointer-events: none;
   }
   .hero-number.done{ font-size: 28px; font-weight: 700; }
+
+  @keyframes glitchFront{
+    0%, 100%{ transform: translate(0,0); opacity: 1; }
+    15%{ transform: translate(2px,0); }
+    35%{ transform: translate(-2px,1px); opacity: 0.55; }
+    55%{ transform: translate(1px,-1px); }
+    75%{ transform: translate(-1px,2px); opacity: 0.9; }
+  }
+  @keyframes glitchBack{
+    0%, 100%{ transform: translate(0,0); }
+    20%{ transform: translate(-2px,2px); }
+    40%{ transform: translate(3px,-1px); }
+    60%{ transform: translate(-3px,-2px); }
+    80%{ transform: translate(2px,3px); }
+  }
+  .hero-number.glitching{
+    animation: glitchFront 0.4s steps(1,end);
+  }
+  .hero-number.glitching::before{
+    animation: glitchBack 0.4s steps(1,end);
+  }
   .bar{
     height: 7px;
     background: rgba(255,255,255,0.08);
@@ -211,6 +237,50 @@
     color: var(--text-muted);
   }
   .item-value.active{ color: var(--accent-2-c); text-shadow: 0 0 8px rgba(41,229,255,0.7); }
+
+  .item-right{ display:flex; align-items:center; gap:9px; }
+  .item-action{
+    display:none;
+    font-family:'Space Grotesk',sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    padding: 7px 11px;
+    border-radius: 9px;
+    border: 1px solid rgba(255,62,201,0.55);
+    background: rgba(255,62,201,0.16);
+    color: #fff;
+    cursor: pointer;
+  }
+  .item-action:active{ background: rgba(255,62,201,0.35); }
+  .item-action.finish{
+    border-color: rgba(41,229,255,0.55);
+    background: rgba(41,229,255,0.16);
+  }
+  .item-action.finish:active{ background: rgba(41,229,255,0.35); }
+
+  .hero-action{
+    display:none;
+    margin-top: 14px;
+    width: 100%;
+    font-family: 'Orbitron', 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,62,201,0.55);
+    background: linear-gradient(90deg, rgba(255,62,201,0.22), rgba(177,92,255,0.22));
+    color: #fff;
+    text-shadow: 0 0 8px rgba(255,62,201,0.4);
+    cursor: pointer;
+  }
+  .hero-action:active{ transform: scale(0.98); }
+  .hero-action.finish{
+    border-color: rgba(41,229,255,0.55);
+    background: linear-gradient(90deg, rgba(41,229,255,0.18), rgba(177,92,255,0.18));
+    text-shadow: 0 0 8px rgba(41,229,255,0.4);
+  }
 
   .shift-progress{ padding: 20px 18px 16px; margin-top: 18px; border: 1px solid rgba(190,110,255,0.35); border-radius: 22px; background: rgba(22,10,42,0.42); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
   [data-theme="light"] .shift-progress{ background: rgba(255,255,255,0.6); }
@@ -373,10 +443,11 @@
       <p class="hero-label" id="heroLabel">Next up</p>
       <button class="hero-tap" id="heroTapArea" aria-label="Tap for a line">
         <h1 class="hero-name" id="heroName">—</h1>
-        <div class="hero-number" id="heroNumber">--:--:--</div>
+        <div class="hero-number" id="heroNumber" data-text="--:--:--">--:--:--</div>
       </button>
       <div class="bar"><div class="bar-fill" id="heroBar"></div></div>
       <p class="hero-sub" id="heroSub"></p>
+      <button class="hero-action" id="heroAction" type="button" style="display:none;"></button>
     </section>
 
     <section class="list" id="list"></section>
@@ -593,6 +664,45 @@
     ];
   }
 
+  // ---------- break confirmation runtime (persisted per real-world day) ----------
+  var BREAK_RT_KEY = 'shiftAppBreakRuntime';
+  var breakRuntime = loadBreakRuntime();
+  function loadBreakRuntime(){
+    try{
+      var raw = localStorage.getItem(BREAK_RT_KEY);
+      if(!raw) return { breakA:{}, breakB:{} };
+      var parsed = JSON.parse(raw);
+      if(parsed.date !== todayStr(new Date())) return { breakA:{}, breakB:{} };
+      return { breakA: parsed.breakA || {}, breakB: parsed.breakB || {} };
+    }catch(e){ return { breakA:{}, breakB:{} }; }
+  }
+  function saveBreakRuntime(){
+    try{
+      localStorage.setItem(BREAK_RT_KEY, JSON.stringify({
+        date: todayStr(new Date()),
+        breakA: breakRuntime.breakA || {},
+        breakB: breakRuntime.breakB || {}
+      }));
+    }catch(e){}
+  }
+  function confirmBreakStart(key){
+    breakRuntime[key] = { confirmedAt: getNow().getTime(), manualDoneAt: null };
+    saveBreakRuntime();
+  }
+  function finishBreakNow(key){
+    breakRuntime[key] = breakRuntime[key] || {};
+    breakRuntime[key].manualDoneAt = getNow().getTime();
+    saveBreakRuntime();
+  }
+  function handleItemAction(key){
+    var meta = ITEMS_META.filter(function(m){ return m.key === key; })[0];
+    if(!meta) return;
+    var st = computeStatus(meta, getNow());
+    if(st.phase === 'awaiting'){ confirmBreakStart(key); }
+    else if(st.phase === 'active'){ finishBreakNow(key); }
+    tick();
+  }
+
   // ---------- status computation ----------
   function computeStatus(meta, now){
     var conf = settings.items[meta.key];
@@ -603,12 +713,19 @@
       }
       return { phase:'done', remaining:null };
     }
-    // break
-    var dur = (conf.duration || meta.duration || 15) * 60000;
-    var endTarget = new Date(startTarget.getTime() + dur);
-    if(now < startTarget){
-      return { phase:'pending', remaining: startTarget-now, target: startTarget };
+    // break: pending -> awaiting confirmation -> active (from confirm tap) -> done
+    var rt = breakRuntime[meta.key] || {};
+    if(rt.manualDoneAt){
+      return { phase:'done', remaining:null };
     }
+    if(!rt.confirmedAt){
+      if(now < startTarget){
+        return { phase:'pending', remaining: startTarget-now, target: startTarget };
+      }
+      return { phase:'awaiting', remaining: 0, since: startTarget };
+    }
+    var dur = (conf.duration || meta.duration || 15) * 60000;
+    var endTarget = new Date(rt.confirmedAt + dur);
     if(now < endTarget){
       return { phase:'active', remaining: endTarget-now, target: endTarget };
     }
@@ -696,6 +813,29 @@
     }, mins*60000);
   }
 
+  // ---------- occasional glitch flicker on the hero number ----------
+  var glitchTimer = null;
+  function triggerGlitch(){
+    heroNumber.classList.remove('glitching');
+    void heroNumber.offsetWidth; // restart animation
+    heroNumber.classList.add('glitching');
+    setTimeout(function(){ heroNumber.classList.remove('glitching'); }, 400);
+    if(Math.random() < 0.35){
+      setTimeout(function(){
+        heroNumber.classList.add('glitching');
+        setTimeout(function(){ heroNumber.classList.remove('glitching'); }, 300);
+      }, 480);
+    }
+  }
+  function scheduleGlitch(){
+    var delay = 4000 + Math.random()*9000;
+    if(glitchTimer) clearTimeout(glitchTimer);
+    glitchTimer = setTimeout(function(){
+      triggerGlitch();
+      scheduleGlitch();
+    }, delay);
+  }
+
   // ---------- rendering ----------
   var listEl = document.getElementById('list');
   var rowEls = {};
@@ -704,9 +844,14 @@
     row.className = 'item-row';
     row.innerHTML =
       '<div class="item-left"><span class="item-icon">'+meta.icon+'</span><span class="dot"></span><span class="item-label">'+meta.label+'</span></div>' +
-      '<span class="item-value">--:--</span>';
+      '<div class="item-right">' +
+        '<span class="item-value">--:--</span>' +
+        '<button class="item-action" type="button" style="display:none;"></button>' +
+      '</div>';
     listEl.appendChild(row);
     rowEls[meta.key] = row;
+    var actionBtn = row.querySelector('.item-action');
+    actionBtn.addEventListener('click', function(){ handleItemAction(meta.key); });
   });
 
   var heroLabel = document.getElementById('heroLabel');
@@ -714,6 +859,8 @@
   var heroNumber = document.getElementById('heroNumber');
   var heroBar = document.getElementById('heroBar');
   var heroSub = document.getElementById('heroSub');
+  var heroActionBtn = document.getElementById('heroAction');
+  var currentHeroKey = null;
   var clockEl = document.getElementById('clock');
   var shiftPctEl = document.getElementById('shiftPct');
   var shiftBarEl = document.getElementById('shiftBar');
@@ -728,6 +875,8 @@
       prevDone = {};
       rewardShown = {};
       prevMilestone = 0;
+      breakRuntime = { breakA:{}, breakB:{} };
+      saveBreakRuntime();
     }
     lastDateStr = ds;
 
@@ -756,15 +905,31 @@
 
       var dot = row.querySelector('.dot');
       var val = row.querySelector('.item-value');
+      var actionBtn = row.querySelector('.item-action');
       dot.classList.toggle('active', st.phase === 'active');
       val.classList.toggle('active', st.phase === 'active');
 
-      if(st.phase === 'pending'){
-        val.textContent = fmtClock(st.remaining);
-      } else if(st.phase === 'active'){
+      if(st.phase === 'awaiting'){
+        val.style.display = 'none';
+        actionBtn.style.display = 'inline-block';
+        actionBtn.textContent = "I'm on break";
+        actionBtn.className = 'item-action start';
+      } else if(st.phase === 'active' && meta.type === 'break'){
+        val.style.display = '';
         val.textContent = fmtClock(st.remaining) + ' left';
+        actionBtn.style.display = 'inline-block';
+        actionBtn.textContent = 'Finished';
+        actionBtn.className = 'item-action finish';
       } else {
-        val.textContent = meta.doneMsg;
+        val.style.display = '';
+        actionBtn.style.display = 'none';
+        if(st.phase === 'pending'){
+          val.textContent = fmtClock(st.remaining);
+        } else if(st.phase === 'active'){
+          val.textContent = fmtClock(st.remaining) + ' left';
+        } else {
+          val.textContent = meta.doneMsg;
+        }
       }
 
       if(st.phase === 'done' && !prevDone[meta.key]){
@@ -784,22 +949,22 @@
         rewardShown[meta.key] = REWARD_LINES[Math.floor(Math.random()*REWARD_LINES.length)];
       }
 
-      if((st.phase === 'pending' || st.phase === 'active') && st.remaining < bestRemaining){
+      if((st.phase === 'pending' || st.phase === 'active' || st.phase === 'awaiting') && st.remaining < bestRemaining){
         bestRemaining = st.remaining;
         bestKey = meta.key;
       }
     });
 
     // hero
-    if(Date.now() < tapMessageUntil){
-      // keep showing easter-egg line, but still refresh number below
-    }
+    currentHeroKey = bestKey;
     if(bestKey){
       var meta = ITEMS_META.filter(function(m){ return m.key === bestKey; })[0];
       var st = statuses[bestKey];
-      heroLabel.textContent = st.phase === 'active' ? 'Right now' : 'Next up';
+      heroLabel.textContent = (st.phase === 'active' || st.phase === 'awaiting') ? 'Right now' : 'Next up';
       heroName.textContent = meta.label;
-      heroNumber.textContent = fmtClock(st.remaining, true);
+      var displayMs = (st.phase === 'awaiting') ? (now - st.since) : st.remaining;
+      heroNumber.textContent = fmtClock(displayMs, true);
+      heroNumber.dataset.text = heroNumber.textContent;
       heroNumber.classList.remove('done');
       var totalSpan = (st.phase === 'active')
         ? (settings.items[bestKey].duration || meta.duration || 15) * 60000
@@ -807,23 +972,40 @@
       if(totalSpan){
         var pct = 100 - clamp((st.remaining/totalSpan)*100, 0, 100);
         heroBar.style.width = pct + '%';
+      } else if(st.phase === 'awaiting'){
+        heroBar.style.width = '100%';
       } else {
         heroBar.style.width = '2%';
       }
       if(Date.now() >= tapMessageUntil){
-        if(st.phase === 'active' && rewardShown[bestKey]){
+        if(st.phase === 'awaiting'){
+          heroSub.textContent = "Whenever you're ready";
+        } else if(st.phase === 'active' && rewardShown[bestKey]){
           heroSub.textContent = rewardShown[bestKey];
         } else {
           heroSub.textContent = '';
         }
       }
+      if(meta.type === 'break' && st.phase === 'awaiting'){
+        heroActionBtn.style.display = 'block';
+        heroActionBtn.textContent = "I'm on break";
+        heroActionBtn.className = 'hero-action start';
+      } else if(meta.type === 'break' && st.phase === 'active'){
+        heroActionBtn.style.display = 'block';
+        heroActionBtn.textContent = 'Finished break';
+        heroActionBtn.className = 'hero-action finish';
+      } else {
+        heroActionBtn.style.display = 'none';
+      }
     } else {
       heroLabel.textContent = 'Status';
       heroName.textContent = 'All caught up';
       heroNumber.textContent = "You're done";
+      heroNumber.dataset.text = heroNumber.textContent;
       heroNumber.classList.add('done');
       heroBar.style.width = '100%';
       if(Date.now() >= tapMessageUntil) heroSub.textContent = '';
+      heroActionBtn.style.display = 'none';
     }
 
     // overall shift progress + color shift + survival counter
@@ -874,6 +1056,11 @@
     easterIndex = (easterIndex + 1) % EASTER_LINES.length;
     heroSub.textContent = EASTER_LINES[easterIndex];
     tapMessageUntil = Date.now() + 4000;
+  });
+
+  heroActionBtn.addEventListener('click', function(e){
+    e.stopPropagation();
+    if(currentHeroKey) handleItemAction(currentHeroKey);
   });
 
   // ---------- settings drawer ----------
@@ -990,6 +1177,8 @@
     saveSettings();
     document.body.setAttribute('data-theme', settings.theme);
     testState.baseVirtual = null;
+    breakRuntime = { breakA:{}, breakB:{} };
+    saveBreakRuntime();
     populateDrawer();
   });
 
@@ -999,6 +1188,7 @@
   tick();
   setInterval(tick, 1000);
   scheduleEncouragement();
+  scheduleGlitch();
 })();
 </script>
 </body>

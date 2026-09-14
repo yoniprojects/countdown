@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Shift">
@@ -46,7 +46,7 @@
     --divider: rgba(var(--divider-light), 0.10);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
-  html,body{height:100%;}
+  html,body{height:100%; touch-action: pan-x pan-y; -ms-touch-action: pan-x pan-y;}
   body{
     margin:0;
     background-color: var(--bg);
@@ -482,6 +482,24 @@
     <div id="itemSettings"></div>
 
     <div class="field-group">
+      <label style="margin-bottom:2px;">Add a sub-event</label>
+      <p class="hero-sub small muted" style="margin:0 0 10px;">Your own item on the timeline, same as Break 1 or Chat closes.</p>
+      <div class="item-setting-controls" style="flex-wrap:wrap;">
+        <input type="text" id="customEmoji" maxlength="4" placeholder="🎯" style="width:46px; text-align:center; font-size:16px;">
+        <input type="text" id="customName" placeholder="Name" style="flex:1; min-width:110px; font-family:'Space Grotesk',sans-serif; background:var(--surface-2); border:none; color:var(--text); padding:7px 10px; border-radius:8px; font-size:14px;">
+      </div>
+      <div class="item-setting-controls" style="margin-top:8px;">
+        <input type="time" id="customTime">
+        <span class="dur-wrap" id="customDurWrap" style="display:none;">for <input type="number" id="customDuration" min="1" max="180" value="15"> min</span>
+      </div>
+      <div class="segmented" id="customTypeSeg" style="margin-top:10px;">
+        <button type="button" data-type="point" class="active">Point in time</button>
+        <button type="button" data-type="break">Timed break</button>
+      </div>
+      <button type="button" class="reset-btn" id="customAddBtn" style="margin-top:12px; border-color: rgba(255,62,201,0.45); color: var(--accent-c);">+ Add sub-event</button>
+    </div>
+
+    <div class="field-group">
       <label>Test mode <input type="checkbox" class="toggle" id="testModeToggle"></label>
       <div id="testModeControls" style="display:none; padding-top:8px;">
         <div class="item-setting-controls" style="margin-bottom:8px;">
@@ -513,13 +531,14 @@
 (function(){
   "use strict";
 
-  var ITEMS_META = [
+  var ITEMS_META_MID = [
     { key:'coworkers',  label:'Team joins',    type:'point', doneMsg:"Team's all in",      icon:'👥' },
     { key:'breakA',     label:'Break 1',       type:'break', duration:15, activeMsg:'On break', doneMsg:'Back to it', icon:'☕' },
     { key:'breakB',     label:'Break 2',       type:'break', duration:30, activeMsg:'On break', doneMsg:'Back to it', icon:'🍕' },
-    { key:'chatCloses', label:'Chat closes',   type:'point', doneMsg:"Chat's closed",       icon:'💬' },
-    { key:'shiftEnd',   label:'End of shift',  type:'point', doneMsg:"Shift's done — go home", icon:'🚩' }
+    { key:'chatCloses', label:'Chat closes',   type:'point', doneMsg:"Chat's closed",       icon:'💬' }
   ];
+  var SHIFT_END_META = { key:'shiftEnd', label:'End of shift', type:'point', doneMsg:"Shift's done — go home", icon:'🚩' };
+  var ALL_BUILTIN_META = ITEMS_META_MID.concat([SHIFT_END_META]);
 
   var DEFAULTS = {
     shiftStart: '07:00',
@@ -531,8 +550,42 @@
       chatCloses: { enabled:true, time:'15:00' },
       shiftEnd:   { enabled:true, time:'15:30' }
     },
+    customItems: [],
     testMode: { enabled:false, time:'07:00', speed:60 }
   };
+
+  // ---------- dynamic item list (built-ins + user-defined custom sub-events) ----------
+  function getBreakEnabledCount(){
+    var count = 0;
+    ['breakA','breakB'].forEach(function(k){
+      if(settings.items[k] && settings.items[k].enabled) count++;
+    });
+    return count;
+  }
+  function getItemLabel(meta){
+    if((meta.key === 'breakA' || meta.key === 'breakB') && getBreakEnabledCount() === 1){
+      return 'Break';
+    }
+    return meta.label;
+  }
+  function getCustomItemsMeta(){
+    return (settings.customItems || []).map(function(c){
+      var conf = settings.items[c.key] || {};
+      return {
+        key: c.key,
+        label: c.label,
+        icon: c.icon,
+        type: c.type,
+        duration: conf.duration || 15,
+        activeMsg: c.type === 'break' ? 'On it' : undefined,
+        doneMsg: c.type === 'break' ? 'Back to it' : (c.label + ' — done'),
+        custom: true
+      };
+    });
+  }
+  function getAllItemsMeta(){
+    return ITEMS_META_MID.concat(getCustomItemsMeta(), [SHIFT_END_META]);
+  }
 
   var STORAGE_KEY = 'shiftAppSettings';
   var STREAK_KEY = 'shiftAppStreak';
@@ -581,9 +634,18 @@
       merged.shiftStart = parsed.shiftStart || DEFAULTS.shiftStart;
       merged.theme = parsed.theme || DEFAULTS.theme;
       merged.testMode = Object.assign({}, DEFAULTS.testMode, parsed.testMode || {});
-      ITEMS_META.forEach(function(m){
+      ALL_BUILTIN_META.forEach(function(m){
         if(parsed.items && parsed.items[m.key]){
           merged.items[m.key] = Object.assign({}, merged.items[m.key], parsed.items[m.key]);
+        }
+      });
+      merged.customItems = Array.isArray(parsed.customItems) ? parsed.customItems : [];
+      merged.customItems.forEach(function(c){
+        var base = { enabled:true, time:'09:00', duration:15 };
+        if(parsed.items && parsed.items[c.key]){
+          merged.items[c.key] = Object.assign({}, base, parsed.items[c.key]);
+        } else if(!merged.items[c.key]){
+          merged.items[c.key] = base;
         }
       });
       return merged;
@@ -670,18 +732,17 @@
   function loadBreakRuntime(){
     try{
       var raw = localStorage.getItem(BREAK_RT_KEY);
-      if(!raw) return { breakA:{}, breakB:{} };
+      if(!raw) return {};
       var parsed = JSON.parse(raw);
-      if(parsed.date !== todayStr(new Date())) return { breakA:{}, breakB:{} };
-      return { breakA: parsed.breakA || {}, breakB: parsed.breakB || {} };
-    }catch(e){ return { breakA:{}, breakB:{} }; }
+      if(parsed.date !== todayStr(new Date())) return {};
+      return parsed.data || {};
+    }catch(e){ return {}; }
   }
   function saveBreakRuntime(){
     try{
       localStorage.setItem(BREAK_RT_KEY, JSON.stringify({
         date: todayStr(new Date()),
-        breakA: breakRuntime.breakA || {},
-        breakB: breakRuntime.breakB || {}
+        data: breakRuntime
       }));
     }catch(e){}
   }
@@ -695,7 +756,7 @@
     saveBreakRuntime();
   }
   function handleItemAction(key){
-    var meta = ITEMS_META.filter(function(m){ return m.key === key; })[0];
+    var meta = getAllItemsMeta().filter(function(m){ return m.key === key; })[0];
     if(!meta) return;
     var st = computeStatus(meta, getNow());
     if(st.phase === 'awaiting'){ confirmBreakStart(key); }
@@ -839,20 +900,25 @@
   // ---------- rendering ----------
   var listEl = document.getElementById('list');
   var rowEls = {};
-  ITEMS_META.forEach(function(meta){
-    var row = document.createElement('div');
-    row.className = 'item-row';
-    row.innerHTML =
-      '<div class="item-left"><span class="item-icon">'+meta.icon+'</span><span class="dot"></span><span class="item-label">'+meta.label+'</span></div>' +
-      '<div class="item-right">' +
-        '<span class="item-value">--:--</span>' +
-        '<button class="item-action" type="button" style="display:none;"></button>' +
-      '</div>';
-    listEl.appendChild(row);
-    rowEls[meta.key] = row;
-    var actionBtn = row.querySelector('.item-action');
-    actionBtn.addEventListener('click', function(){ handleItemAction(meta.key); });
-  });
+  function renderItemRows(){
+    listEl.innerHTML = '';
+    rowEls = {};
+    getAllItemsMeta().forEach(function(meta){
+      var row = document.createElement('div');
+      row.className = 'item-row';
+      row.innerHTML =
+        '<div class="item-left"><span class="item-icon">'+meta.icon+'</span><span class="dot"></span><span class="item-label">'+getItemLabel(meta)+'</span></div>' +
+        '<div class="item-right">' +
+          '<span class="item-value">--:--</span>' +
+          '<button class="item-action" type="button" style="display:none;"></button>' +
+        '</div>';
+      listEl.appendChild(row);
+      rowEls[meta.key] = row;
+      var actionBtn = row.querySelector('.item-action');
+      actionBtn.addEventListener('click', function(){ handleItemAction(meta.key); });
+    });
+  }
+  renderItemRows();
 
   var heroLabel = document.getElementById('heroLabel');
   var heroName = document.getElementById('heroName');
@@ -875,7 +941,7 @@
       prevDone = {};
       rewardShown = {};
       prevMilestone = 0;
-      breakRuntime = { breakA:{}, breakB:{} };
+      breakRuntime = {};
       saveBreakRuntime();
     }
     lastDateStr = ds;
@@ -889,20 +955,24 @@
     clockEl.textContent = h12 + ':' + String(mm).padStart(2,'0') + ' ' + ampm + ' · ' + days[now.getDay()] + badge;
 
     // per-item status
+    var allItemsMeta = getAllItemsMeta();
     var statuses = {};
-    ITEMS_META.forEach(function(meta){
+    allItemsMeta.forEach(function(meta){
       statuses[meta.key] = computeStatus(meta, now);
     });
 
     // list rows + confetti edge-detect + rewards
     var bestKey = null, bestRemaining = Infinity;
-    ITEMS_META.forEach(function(meta){
+    allItemsMeta.forEach(function(meta){
       var conf = settings.items[meta.key];
       var st = statuses[meta.key];
       var row = rowEls[meta.key];
+      if(!row || !conf) return;
       row.style.display = conf.enabled ? 'flex' : 'none';
       if(!conf.enabled) return;
 
+      var labelEl = row.querySelector('.item-label');
+      if(labelEl) labelEl.textContent = getItemLabel(meta);
       var dot = row.querySelector('.dot');
       var val = row.querySelector('.item-value');
       var actionBtn = row.querySelector('.item-action');
@@ -958,10 +1028,10 @@
     // hero
     currentHeroKey = bestKey;
     if(bestKey){
-      var meta = ITEMS_META.filter(function(m){ return m.key === bestKey; })[0];
+      var meta = allItemsMeta.filter(function(m){ return m.key === bestKey; })[0];
       var st = statuses[bestKey];
       heroLabel.textContent = (st.phase === 'active' || st.phase === 'awaiting') ? 'Right now' : 'Next up';
-      heroName.textContent = meta.label;
+      heroName.textContent = getItemLabel(meta);
       var displayMs = (st.phase === 'awaiting') ? (now - st.since) : st.remaining;
       heroNumber.textContent = fmtClock(displayMs, true);
       heroNumber.dataset.text = heroNumber.textContent;
@@ -1085,8 +1155,9 @@
     document.getElementById('shiftEndInput').value = settings.items.shiftEnd.time;
 
     itemSettingsEl.innerHTML = '';
-    ITEMS_META.forEach(function(meta){
+    getAllItemsMeta().forEach(function(meta){
       var conf = settings.items[meta.key];
+      if(!conf) return;
       var wrap = document.createElement('div');
       wrap.className = 'item-setting';
       var durHtml = meta.type === 'break'
@@ -1099,10 +1170,16 @@
             '<input type="time" data-key="'+meta.key+'" data-field="time" value="'+conf.time+'">' +
             durHtml +
           '</div>';
+      var deleteHtml = meta.custom
+        ? '<button type="button" class="icon-btn custom-delete" data-del-key="'+meta.key+'" aria-label="Remove" style="font-size:15px; padding:2px 4px; margin:0;">✕</button>'
+        : '';
       wrap.innerHTML =
         '<div class="row-between">' +
-          '<span>'+meta.icon+' '+meta.label+'</span>' +
-          '<input type="checkbox" class="toggle" data-key="'+meta.key+'" data-field="enabled" '+(conf.enabled?'checked':'')+'>' +
+          '<span>'+meta.icon+' '+getItemLabel(meta)+'</span>' +
+          '<div style="display:flex; align-items:center; gap:10px;">' +
+            deleteHtml +
+            '<input type="checkbox" class="toggle" data-key="'+meta.key+'" data-field="enabled" '+(conf.enabled?'checked':'')+'>' +
+          '</div>' +
         '</div>' +
         controlsHtml;
       itemSettingsEl.appendChild(wrap);
@@ -1124,6 +1201,20 @@
                  : e.target.value;
         settings.items[key][field] = val;
         saveSettings();
+        renderItemRows();
+      };
+    });
+    itemSettingsEl.querySelectorAll('.custom-delete').forEach(function(btn){
+      btn.onclick = function(e){
+        e.stopPropagation();
+        var key = btn.getAttribute('data-del-key');
+        settings.customItems = settings.customItems.filter(function(c){ return c.key !== key; });
+        delete settings.items[key];
+        delete breakRuntime[key];
+        saveSettings();
+        saveBreakRuntime();
+        renderItemRows();
+        populateDrawer();
       };
     });
 
@@ -1157,6 +1248,42 @@
     };
   }
 
+  // ---------- custom sub-event creation ----------
+  var customTypeSeg = document.getElementById('customTypeSeg');
+  var customDurWrap = document.getElementById('customDurWrap');
+  var customType = 'point';
+  customTypeSeg.addEventListener('click', function(e){
+    var btn = e.target.closest('button');
+    if(!btn) return;
+    customType = btn.getAttribute('data-type');
+    customTypeSeg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('active', b === btn); });
+    customDurWrap.style.display = customType === 'break' ? 'inline-flex' : 'none';
+  });
+  document.getElementById('customAddBtn').addEventListener('click', function(){
+    var emojiInput = document.getElementById('customEmoji');
+    var nameInput = document.getElementById('customName');
+    var timeInput = document.getElementById('customTime');
+    var durInput = document.getElementById('customDuration');
+    var name = nameInput.value.trim();
+    if(!name){ nameInput.focus(); return; }
+    var emoji = emojiInput.value.trim() || '⭐';
+    var time = timeInput.value || '09:00';
+    var key = 'custom_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    settings.customItems.push({ key: key, label: name, icon: emoji, type: customType });
+    settings.items[key] = customType === 'break'
+      ? { enabled:true, time:time, duration: parseInt(durInput.value,10) || 15 }
+      : { enabled:true, time:time };
+    saveSettings();
+
+    emojiInput.value = ''; nameInput.value = ''; timeInput.value = ''; durInput.value = 15;
+    customType = 'point';
+    customTypeSeg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-type') === 'point'); });
+    customDurWrap.style.display = 'none';
+
+    renderItemRows();
+    populateDrawer();
+  });
+
   var themeSeg = document.getElementById('themeSeg');
   function updateThemeButtons(){
     themeSeg.querySelectorAll('button').forEach(function(b){
@@ -1177,10 +1304,21 @@
     saveSettings();
     document.body.setAttribute('data-theme', settings.theme);
     testState.baseVirtual = null;
-    breakRuntime = { breakA:{}, breakB:{} };
+    breakRuntime = {};
     saveBreakRuntime();
+    renderItemRows();
     populateDrawer();
   });
+
+  // ---------- block zoom (iOS Safari ignores user-scalable=no for pinch/double-tap) ----------
+  document.addEventListener('gesturestart', function(e){ e.preventDefault(); });
+  document.addEventListener('gesturechange', function(e){ e.preventDefault(); });
+  var lastTouchEnd = 0;
+  document.addEventListener('touchend', function(e){
+    var now = Date.now();
+    if(now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive:false });
 
   // ---------- init ----------
   document.body.setAttribute('data-theme', settings.theme);

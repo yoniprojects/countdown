@@ -392,6 +392,16 @@
   .dur-wrap{ display:flex; align-items:center; gap:6px; font-size:13px; color: var(--text-muted); }
   .dur-wrap input{ width: 52px; }
 
+  .reorder-group{ display:flex; flex-direction:column; gap:2px; margin-right:2px; }
+  .reorder-btn{
+    background:none; border:none; color: var(--accent-2-c); cursor:pointer;
+    font-size: 13px; line-height:1; padding: 3px 5px; margin:0; border-radius:6px;
+  }
+  .reorder-btn:active{ background: var(--surface-2); }
+  .reorder-btn:disabled{ color: var(--text-muted); opacity:.3; cursor:default; }
+  .item-setting .row-between{ gap: 8px; }
+  .item-setting .row-between span:first-child{ display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
   .toggle{
     appearance:none; -webkit-appearance:none;
     width: 42px; height: 25px; border-radius: 13px;
@@ -583,8 +593,34 @@
       };
     });
   }
-  function getAllItemsMeta(){
+  function getUnorderedItemsMeta(){
     return ITEMS_META_MID.concat(getCustomItemsMeta(), [SHIFT_END_META]);
+  }
+  // Keeps settings.order in sync with whatever items currently exist:
+  // preserves the user's manual ordering, drops stale keys (deleted custom
+  // items), and appends any new keys (newly-added custom items) at the end.
+  function normalizeOrder(){
+    var all = getUnorderedItemsMeta();
+    var validKeys = {};
+    all.forEach(function(m){ validKeys[m.key] = true; });
+    var existing = Array.isArray(settings.order) ? settings.order.filter(function(k){ return validKeys[k]; }) : [];
+    var seen = {};
+    existing.forEach(function(k){ seen[k] = true; });
+    all.forEach(function(m){
+      if(!seen[m.key]){ existing.push(m.key); seen[m.key] = true; }
+    });
+    settings.order = existing;
+  }
+  function getAllItemsMeta(){
+    var all = getUnorderedItemsMeta();
+    var byKey = {};
+    all.forEach(function(m){ byKey[m.key] = m; });
+    var order = (Array.isArray(settings.order) && settings.order.length) ? settings.order : all.map(function(m){ return m.key; });
+    var ordered = [];
+    order.forEach(function(k){ if(byKey[k]){ ordered.push(byKey[k]); delete byKey[k]; } });
+    // safety net: include anything not covered by the stored order
+    all.forEach(function(m){ if(byKey[m.key]) ordered.push(m); });
+    return ordered;
   }
 
   var STORAGE_KEY = 'shiftAppSettings';
@@ -614,6 +650,7 @@
   ];
 
   var settings = loadSettings();
+  normalizeOrder();
   var streak = loadStreak();
   var prevDone = {};
   var rewardShown = {};
@@ -639,6 +676,7 @@
           merged.items[m.key] = Object.assign({}, merged.items[m.key], parsed.items[m.key]);
         }
       });
+      merged.order = Array.isArray(parsed.order) ? parsed.order : null;
       merged.customItems = Array.isArray(parsed.customItems) ? parsed.customItems : [];
       merged.customItems.forEach(function(c){
         var base = { enabled:true, time:'09:00', duration:15 };
@@ -1155,7 +1193,8 @@
     document.getElementById('shiftEndInput').value = settings.items.shiftEnd.time;
 
     itemSettingsEl.innerHTML = '';
-    getAllItemsMeta().forEach(function(meta){
+    var orderedMeta = getAllItemsMeta();
+    orderedMeta.forEach(function(meta, idx){
       var conf = settings.items[meta.key];
       if(!conf) return;
       var wrap = document.createElement('div');
@@ -1173,9 +1212,14 @@
       var deleteHtml = meta.custom
         ? '<button type="button" class="icon-btn custom-delete" data-del-key="'+meta.key+'" aria-label="Remove" style="font-size:15px; padding:2px 4px; margin:0;">✕</button>'
         : '';
+      var reorderHtml =
+        '<span class="reorder-group">' +
+          '<button type="button" class="reorder-btn" data-reorder-key="'+meta.key+'" data-dir="-1" aria-label="Move up"'+(idx===0?' disabled':'')+'>▲</button>' +
+          '<button type="button" class="reorder-btn" data-reorder-key="'+meta.key+'" data-dir="1" aria-label="Move down"'+(idx===orderedMeta.length-1?' disabled':'')+'>▼</button>' +
+        '</span>';
       wrap.innerHTML =
         '<div class="row-between">' +
-          '<span>'+meta.icon+' '+getItemLabel(meta)+'</span>' +
+          '<span>'+reorderHtml+meta.icon+' '+getItemLabel(meta)+'</span>' +
           '<div style="display:flex; align-items:center; gap:10px;">' +
             deleteHtml +
             '<input type="checkbox" class="toggle" data-key="'+meta.key+'" data-field="enabled" '+(conf.enabled?'checked':'')+'>' +
@@ -1183,6 +1227,22 @@
         '</div>' +
         controlsHtml;
       itemSettingsEl.appendChild(wrap);
+    });
+    itemSettingsEl.querySelectorAll('.reorder-btn').forEach(function(btn){
+      btn.onclick = function(e){
+        e.stopPropagation();
+        var key = btn.getAttribute('data-reorder-key');
+        var dir = parseInt(btn.getAttribute('data-dir'), 10);
+        var i = settings.order.indexOf(key);
+        var j = i + dir;
+        if(i < 0 || j < 0 || j >= settings.order.length) return;
+        var tmp = settings.order[i];
+        settings.order[i] = settings.order[j];
+        settings.order[j] = tmp;
+        saveSettings();
+        renderItemRows();
+        populateDrawer();
+      };
     });
 
     // wire up
@@ -1211,6 +1271,7 @@
         settings.customItems = settings.customItems.filter(function(c){ return c.key !== key; });
         delete settings.items[key];
         delete breakRuntime[key];
+        normalizeOrder();
         saveSettings();
         saveBreakRuntime();
         renderItemRows();
@@ -1273,6 +1334,7 @@
     settings.items[key] = customType === 'break'
       ? { enabled:true, time:time, duration: parseInt(durInput.value,10) || 15 }
       : { enabled:true, time:time };
+    normalizeOrder();
     saveSettings();
 
     emojiInput.value = ''; nameInput.value = ''; timeInput.value = ''; durInput.value = 15;
@@ -1301,6 +1363,7 @@
 
   document.getElementById('resetBtn').addEventListener('click', function(){
     settings = deepClone(DEFAULTS);
+    normalizeOrder();
     saveSettings();
     document.body.setAttribute('data-theme', settings.theme);
     testState.baseVirtual = null;

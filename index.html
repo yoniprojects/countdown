@@ -563,10 +563,7 @@
     <div class="sec-title">Chat tracker</div>
     <div class="field-group">
       <label>Chats per hour needed <input type="number" class="narrow" id="target" inputmode="decimal" min="0" step="0.1"></label>
-      <label>Break starts <input type="time" id="bstart"></label>
-      <label>Break ends <input type="time" id="bend"></label>
-      <p class="hint" style="margin-top:6px;">Break time isn't counted in your average or hourly goals.</p>
-      <button type="button" class="reset-btn slim" id="clearBreak">No break today</button>
+      <p class="hint" style="margin-top:6px;">Breaks follow your timeline events (Break 1, Break 2 and any timed break you add). Break time isn't counted in your average or hourly goals.</p>
     </div>
 
     <div class="sec-title">Timeline events</div>
@@ -1030,11 +1027,11 @@
   var chat = loadChat();
 
   function loadChat(){
-    var c = { target: 5, breakStart: "12:00", breakEnd: "12:30", hours: {}, offset: 0, lastHour: null, day: todayStr(new Date()) };
+    var c = { target: 5, hours: {}, offset: 0, lastHour: null, day: todayStr(new Date()) };
     var s = null;
     try{ s = JSON.parse(localStorage.getItem(CHAT_KEY)); }catch(e){}
     if(s && typeof s === 'object'){
-      ['target','breakStart','breakEnd','hours','offset','lastHour','day'].forEach(function(k){
+      ['target','hours','offset','lastHour','day'].forEach(function(k){
         if(s[k] !== undefined) c[k] = s[k];
       });
       // very old saves only had a single total
@@ -1088,18 +1085,35 @@
   function isOvernight(){
     return toMinutes(settings.items.shiftEnd.time) <= toMinutes(settings.shiftStart);
   }
-  function breakRange(){
-    if(!chat.breakStart || !chat.breakEnd) return null;
+  // Chat-tracker breaks come straight from the enabled timed-break timeline events.
+  function breakRanges(){
     var sh = shiftRange();
-    var bs = toMinutes(chat.breakStart), be = toMinutes(chat.breakEnd);
-    if(be <= bs) be += 24 * 60;
-    if(bs < sh.s){ bs += 24 * 60; be += 24 * 60; }
-    return { bs: bs, be: be };
+    var list = [];
+    getAllItemsMeta().forEach(function(meta){
+      if(meta.type !== 'break') return;
+      var conf = settings.items[meta.key];
+      if(!conf || !conf.enabled || !conf.time) return;
+      var dur = parseInt(conf.duration || meta.duration, 10) || 0;
+      if(dur <= 0) return;
+      var bs = toMinutes(conf.time), be = bs + dur;
+      if(bs < sh.s){ bs += 24 * 60; be += 24 * 60; }
+      list.push({ bs: bs, be: be });
+    });
+    list.sort(function(a, b){ return a.bs - b.bs; });
+    var merged = [];
+    list.forEach(function(r){
+      var last = merged[merged.length - 1];
+      if(last && r.bs <= last.be){ last.be = Math.max(last.be, r.be); }
+      else merged.push({ bs: r.bs, be: r.be });
+    });
+    return merged;
   }
   function breakOverlap(a, b){
-    var br = breakRange();
-    if(!br) return 0;
-    return Math.max(0, Math.min(b, br.be) - Math.max(a, br.bs));
+    var total = 0;
+    breakRanges().forEach(function(r){
+      total += Math.max(0, Math.min(b, r.be) - Math.max(a, r.bs));
+    });
+    return total;
   }
   function slots(){
     var sh = shiftRange();
@@ -1148,7 +1162,7 @@
   var builtSig = "";
   function buildHours(){
     var list = slots();
-    var sig = settings.shiftStart + "|" + settings.items.shiftEnd.time + "|" + chat.breakStart + "|" + chat.breakEnd;
+    var sig = settings.shiftStart + "|" + settings.items.shiftEnd.time + "|" + breakRanges().map(function(r){ return r.bs + "-" + r.be; }).join(",");
     if(sig === builtSig) return;
     builtSig = sig;
     var html = "";
@@ -1310,8 +1324,9 @@
       if(nowM < sh2.s) detail += " · starts " + fmtAbs(sh2.s);
       else if(nowM >= sh2.e) detail += " · shift is over";
       else {
-        var brr = breakRange();
-        if(brr && nowM >= brr.bs && nowM < brr.be) detail += " · on break till " + fmtAbs(brr.be);
+        var brr = null;
+        breakRanges().forEach(function(r){ if(nowM >= r.bs && nowM < r.be) brr = r; });
+        if(brr) detail += " · on break till " + fmtAbs(brr.be);
         else detail += " · " + Math.max(1, Math.ceil((cur.b - nowM) - breakOverlap(nowM, cur.b))) + " min left";
       }
       $("hnDetail").textContent = detail;
@@ -1454,17 +1469,6 @@
   });
   $("target").addEventListener("input", function(){
     chat.target = parseFloat(this.value) || 0; saveChat(); renderChat();
-  });
-  $("bstart").addEventListener("change", function(){
-    chat.breakStart = this.value || ""; saveChat(); renderChat();
-  });
-  $("bend").addEventListener("change", function(){
-    chat.breakEnd = this.value || ""; saveChat(); renderChat();
-  });
-  $("clearBreak").addEventListener("click", function(){
-    chat.breakStart = ""; chat.breakEnd = "";
-    $("bstart").value = ""; $("bend").value = "";
-    saveChat(); renderChat();
   });
 
   // ---------- accordion bars (one open at a time) ----------
@@ -1694,8 +1698,6 @@
     $('shiftStart').value = settings.shiftStart;
     $('shiftEndInput').value = settings.items.shiftEnd.time;
     $('target').value = chat.target;
-    $('bstart').value = chat.breakStart || "";
-    $('bend').value = chat.breakEnd || "";
 
     itemSettingsEl.innerHTML = '';
     var orderedMeta = getAllItemsMeta();
@@ -1900,8 +1902,6 @@
   if(settings.testMode && settings.testMode.enabled) resetTestBase();
   flushOffset();
   $('target').value = chat.target;
-  $('bstart').value = chat.breakStart || "";
-  $('bend').value = chat.breakEnd || "";
   tick();
   setInterval(tick, 1000);
   scheduleEncouragement();
